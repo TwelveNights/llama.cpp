@@ -922,6 +922,13 @@ static __device__ __forceinline__ float ggml_cuda_ue4m3_to_fp32(uint8_t x) {
     const uint32_t bits = x * (x != 0x7F && x != 0xFF); // Convert NaN to 0.0f to match CPU implementation.
     const __nv_fp8_e4m3 xf = *reinterpret_cast<const __nv_fp8_e4m3 *>(&bits);
     return static_cast<float>(xf) / 2;
+#elif defined(GGML_USE_HIP) && defined(CDNA)
+    if (x == 0u || x == 0x7Fu) {
+        return 0.0f;
+    }
+    const uint32_t exp = (x >> 3) & 0xFu;
+    const float man = (float) ((x & 7u) | (exp ? 8u : 0u));
+    return ldexpf(man, max((int) exp - 11, -10));
 #else
     const uint32_t mag = x & 0x7Fu;
     const uint32_t normal_bits = (mag << 20) + (119u << 23);
@@ -938,6 +945,16 @@ static __host__ __device__ __forceinline__ float ggml_cuda_f8_e4m3_to_fp32(uint8
     __nv_fp8_e4m3 xf;
     xf.__x = x;
     return static_cast<float>(xf);
+#elif defined(__HIP_DEVICE_COMPILE__)
+    const uint32_t exp = (x >> 3) & 0xFu;
+    const float man = (float) ((x & 7u) | (exp ? 8u : 0u));
+    float out = ldexpf(man, max((int) exp - 10, -9));
+    uint32_t out_bits;
+    memcpy(&out_bits, &out, sizeof(float));
+    out_bits |= uint32_t(x & 0x80u) << 24;
+    out_bits = ((x & 0x7Fu) == 0x7Fu) ? 0xFFFFFFFFu : out_bits;
+    memcpy(&out, &out_bits, sizeof(float));
+    return out;
 #else
     const uint32_t mag = x & 0x7Fu;
     const uint32_t normal_bits = (mag << 20) + (120u << 23);
